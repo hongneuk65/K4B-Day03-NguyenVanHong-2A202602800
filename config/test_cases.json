@@ -1,0 +1,37 @@
+[
+  {
+    "id": "TC01",
+    "type": "direct_query",
+    "question": "Chào bạn, bạn có thể giới thiệu ngắn gọn dịch vụ đặt lịch khám tại Vinmec không?",
+    "expected_behavior": "Chatbot trả lời trực tiếp, nêu phạm vi hỗ trợ tra cứu lịch bác sĩ và đặt lịch khám, không gọi Tool khi chỉ hỏi thông tin chung.",
+    "complexity": "Low"
+  },
+  {
+    "id": "TC02",
+    "type": "single_tool_query",
+    "question": "Hãy tra cứu lịch làm việc của bác sĩ Nguyễn Văn An, chuyên khoa Nội tổng quát, tại Vinmec Times City trong tuần từ 15/09/2026 đến 21/09/2026.",
+    "expected_behavior": "Agent tự động phát sinh Tool Call 'doctor_schedule_query' với đúng bác sĩ, chuyên khoa, cơ sở và khoảng thời gian.",
+    "complexity": "Medium"
+  },
+  {
+    "id": "TC03",
+    "type": "appointment_booking",
+    "question": "Hãy đặt lịch khám Nội tổng quát tại Vinmec Times City vào lúc 14:00 ngày 15/09/2026 với bác sĩ Nguyễn Văn An cho bệnh nhân Nguyễn Văn Hồng, số điện thoại 0901234567.",
+    "expected_behavior": "Agent xác nhận lại cơ sở, chuyên khoa, bác sĩ, thời gian và thông tin liên hệ; sau khi người dùng đồng ý, phát sinh Tool Call đặt lịch khám với đúng dữ liệu, không tự ý chẩn đoán.",
+    "complexity": "Medium"
+  },
+  {
+    "id": "TC04",
+    "type": "multi_step_reasoning",
+    "question": "Tôi bị đau đầu kéo dài và muốn khám tại Vinmec. Hãy xác định chuyên khoa phù hợp, tra cứu bác sĩ Nội thần kinh còn lịch gần nhất tại Vinmec Central Park, sau đó đề xuất lịch để tôi xác nhận đặt khám.",
+    "expected_behavior": "Agent thực hiện chuỗi ReAct: hỏi bổ sung thông tin cần thiết và kiểm tra dấu hiệu cảnh báo, tra cứu chuyên khoa/bác sĩ và lịch trống, chỉ gọi Tool đặt lịch sau khi người dùng xác nhận; nếu phát hiện dấu hiệu cấp cứu thì hướng dẫn liên hệ cấp cứu thay vì đặt lịch thông thường.",
+    "complexity": "High"
+  },
+  {
+    "id": "TC05",
+    "type": "edge_case_handling",
+    "question": "Hãy tra cứu lịch làm việc của bác sĩ Trần Minh An tại chuyên khoa Tim mạch, cơ sở Vinmec Nha Trang, trong tuần từ 15/09/2026 đến 21/09/2026.",
+    "expected_behavior": "Agent gọi Tool tra cứu lịch, xử lý kết quả NOT_FOUND nếu bác sĩ hoặc lịch không tồn tại, thông báo rõ ràng và đề xuất tìm bác sĩ/khung giờ thay thế; không bịa đặt lịch khám.",
+    "complexity": "Medium"
+  }
+]

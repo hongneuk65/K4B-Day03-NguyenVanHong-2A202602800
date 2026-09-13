@@ -36,28 +36,52 @@ class MockOfflineProvider(BaseLLMProvider):
 
     def generate_with_tools(self, prompt: str, tools_schema: List[Dict[str, Any]], system_prompt: str = "") -> Dict[str, Any]:
         prompt_lower = prompt.lower()
-        
-        # Mô phỏng nhận diện intent gọi Tool
-        if "sv2026001" in prompt_lower and "đặt lịch" in prompt_lower:
-            return {
-                "type": "tool_call",
-                "tool_name": "schedule_appointment",
-                "arguments": {"student_id": "SV2026001", "datetime_str": "14:00 15/09/2026", "advisor_name": "PGS.TS Nguyễn Văn A"},
-                "thought": "Người dùng yêu cầu đặt lịch hẹn tư vấn cho sinh viên SV2026001. Tôi sẽ gọi tool schedule_appointment."
-            }
-        elif "sv2026001" in prompt_lower or "tra cứu" in prompt_lower:
-            return {
-                "type": "tool_call",
-                "tool_name": "academic_query",
-                "arguments": {"student_id": "SV2026001"},
-                "thought": "Người dùng muốn tra cứu thông tin học vụ của sinh viên SV2026001. Tôi sẽ gọi tool academic_query."
-            }
-        else:
+
+        # Sau Observation, Mock mô phỏng bước tổng hợp cuối thay vì lặp lại cùng Tool.
+        if "observation từ tool" in prompt_lower:
+            if "book_medical_appointment" in prompt_lower:
+                return {
+                    "type": "text",
+                    "content": "Đặt lịch khám đã được ghi nhận thành công theo thông tin bạn cung cấp.",
+                    "thought": "Observation xác nhận đặt lịch thành công; trả lời người dùng."
+                }
             return {
                 "type": "text",
-                "content": f"[Mock Agent Response]: Xin chào! Quy chế học vụ VinUni yêu cầu sinh viên tích lũy tối thiểu 120 tín chỉ và duy trì GPA trên 2.0 để tốt nghiệp.",
-                "thought": "Câu hỏi chung về quy chế học vụ, trả lời trực tiếp không cần gọi Tool."
+                "content": "Tôi đã tra cứu và tổng hợp lịch trống phù hợp từ MCP Server.",
+                "thought": "Observation đã có dữ liệu; trả lời người dùng."
             }
+
+        # Mô phỏng intent cho đề tài Vinmec; giữ nguyên contract Provider của lab.
+        if "đặt lịch" in prompt_lower:
+            return {
+                "type": "tool_call",
+                "tool_name": "book_medical_appointment",
+                "arguments": {
+                    "patient_name": "Nguyễn Văn Hồng", "phone": "0901234567",
+                    "doctor_name": "Nguyễn Văn An", "specialty": "Nội tổng quát",
+                    "facility": "Vinmec Times City", "datetime_str": "14:00 15/09/2026"
+                },
+                "thought": "Người dùng yêu cầu đặt lịch khám Vinmec. Tôi sẽ gọi tool book_medical_appointment."
+            }
+        if any(keyword in prompt_lower for keyword in ("tra cứu", "lịch làm việc", "bác sĩ", "còn lịch")):
+            if "trần minh an" in prompt_lower:
+                doctor_name, specialty, facility = "Trần Minh An", "Tim mạch", "Vinmec Nha Trang"
+            elif "nội thần kinh" in prompt_lower:
+                doctor_name, specialty, facility = "", "Nội thần kinh", "Vinmec Central Park"
+            else:
+                doctor_name, specialty, facility = "Nguyễn Văn An", "Nội tổng quát", "Vinmec Times City"
+            return {
+                "type": "tool_call",
+                "tool_name": "doctor_schedule_query",
+                "arguments": {"doctor_name": doctor_name, "specialty": specialty,
+                               "facility": facility, "date_range": "15/09/2026-21/09/2026"},
+                "thought": "Người dùng muốn tra cứu lịch bác sĩ Vinmec. Tôi sẽ gọi tool doctor_schedule_query."
+            }
+        return {
+            "type": "text",
+            "content": "Vinmec hỗ trợ tra cứu lịch bác sĩ và đặt lịch khám theo chuyên khoa, cơ sở và thời gian.",
+            "thought": "Câu hỏi chung về dịch vụ Vinmec, trả lời trực tiếp không cần gọi Tool."
+        }
 
 
 class GeminiProvider(BaseLLMProvider):

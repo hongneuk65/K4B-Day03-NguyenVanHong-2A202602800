@@ -61,13 +61,18 @@ def run_baseline_chatbot(user_query: str, provider):
     print(f"🤖 Chatbot phản hồi:\n{response}")
 
 
-def run_react_agent(user_query: str, provider, mcp_server: MCPAcademicServer) -> list:
+def run_react_agent(user_query: str, provider, mcp_server: MCPAcademicServer, conversation_history: list = None) -> list:
     """
-    [REACT AGENT LOOP] Thực thi vòng lặp Thought -> Action -> Observation với MCP Server
-    Trả về danh sách trace log của phiên thực thi.
+    [REACT AGENT LOOP] Thực thi vòng lặp Thought -> Action -> Observation với MCP Server.
+    conversation_history chỉ bổ sung ngữ cảnh cho chế độ interactive; contract ReAct cũ vẫn giữ nguyên.
     """
     print(f"\n🤖 [REACT AGENT] Câu hỏi: {user_query}")
-    
+    history_text = ""
+    if conversation_history:
+        history_text = "\n\nLỊCH SỬ HỘI THOẠI TRƯỚC ĐÓ:\n" + "\n".join(conversation_history)
+    agent_prompt = user_query + history_text
+    working_prompt = agent_prompt
+
     step = 0
     trace_logs = []
     tools_list = mcp_server.list_tools()
@@ -78,7 +83,7 @@ def run_react_agent(user_query: str, provider, mcp_server: MCPAcademicServer) ->
         print(f"\n--- 🔄 Vòng lặp ReAct Loop (Step {step}/{MAX_ITERATIONS}) ---")
         
         # Gọi LLM với Native Tool Calling Specs
-        llm_response = provider.generate_with_tools(user_query, tools_list, system_prompt=REACT_AGENT_SYSTEM_PROMPT)
+        llm_response = provider.generate_with_tools(working_prompt, tools_list, system_prompt=REACT_AGENT_SYSTEM_PROMPT)
         latency_ms = round((time.time() - step_start_time) * 1000, 2)
         
         thought = llm_response.get("thought", "Đang suy luận...")
@@ -119,15 +124,34 @@ def run_react_agent(user_query: str, provider, mcp_server: MCPAcademicServer) ->
                 
                 # Tổng hợp Final Answer từ kết quả Observation thực tế
                 if obs_data.get("status") == "SUCCESS":
-                    if "data" in obs_data:
-                        d = obs_data["data"]
-                        final_answer = (
-                            f"Kết quả tra cứu cho sinh viên {obs_data.get('student_id', '')} ({d.get('full_name', '')}): "
-                            f"Lớp {d.get('class', '')}, GPA: {d.get('gpa', '')}, Email: {d.get('email', '')}, "
-                            f"Trạng thái: {d.get('status', '')}, Cố vấn: {d.get('advisor', '')}."
-                        )
-                    elif "message" in obs_data:
+                    if "message" in obs_data:
                         final_answer = obs_data["message"]
+                    elif "data" in obs_data:
+                        d = obs_data["data"]
+                        if isinstance(d, list) and d and "available_slots" in d[0]:
+                            entries = []
+                            for item in d:
+                                slots = ", ".join(item.get("available_slots", [])) or "chưa có khung giờ trống"
+                                entries.append(
+                                    f"{item.get('doctor_name', '')} ({item.get('specialty', '')}, "
+                                    f"{item.get('facility', '')}): {slots}"
+                                )
+                            final_answer = "Các lịch trống phù hợp: " + "; ".join(entries) + "."
+                        elif isinstance(d, dict) and "available_slots" in d:
+                            slots = ", ".join(d.get("available_slots", [])) or "chưa có khung giờ trống"
+                            final_answer = (
+                                f"Lịch làm việc của bác sĩ {d.get('doctor_name', '')}, "
+                                f"chuyên khoa {d.get('specialty', '')} tại {d.get('facility', '')} "
+                                f"trong khoảng {d.get('date_range', '')}: {slots}."
+                            )
+                        elif isinstance(d, dict) and "full_name" in d:
+                            final_answer = (
+                                f"Kết quả tra cứu cho sinh viên {obs_data.get('student_id', '')} ({d.get('full_name', '')}): "
+                                f"Lớp {d.get('class', '')}, GPA: {d.get('gpa', '')}, Email: {d.get('email', '')}, "
+                                f"Trạng thái: {d.get('status', '')}, Cố vấn: {d.get('advisor', '')}."
+                            )
+                        else:
+                            final_answer = json.dumps(d, ensure_ascii=False)
                     else:
                         final_answer = f"Đã hoàn tất xử lý qua MCP Server: {json.dumps(obs_data, ensure_ascii=False)}"
                 elif obs_data.get("status") == "NOT_FOUND":
@@ -145,19 +169,28 @@ def run_react_agent(user_query: str, provider, mcp_server: MCPAcademicServer) ->
                 "latency_ms": latency_ms
             })
             
-            # Kết thúc vòng lặp sau khi hoàn tất Observation và xuất Final Answer
-            print(f"🧠 [Thought]: Đã nhận được dữ liệu từ MCP Server. Tổng hợp kết quả phản hồi.")
-            print(f"🏁 [Final Answer]: {final_answer}")
-            
-            trace_logs.append({
-                "step": step + 1,
-                "query": user_query,
-                "action_type": "FINAL_ANSWER",
-                "thought": "Tổng hợp kết quả từ MCP Server thành công.",
-                "output": final_answer,
-                "latency_ms": 10.0
-            })
-            break
+            # Đưa Observation trở lại LLM để thực hiện bước ReAct tiếp theo.
+            # Chỉ kết thúc khi LLM trả lời text hoặc hết MAX_ITERATIONS.
+            working_prompt = (
+                f"{agent_prompt}\n\n"
+                f"OBSERVATION TỪ TOOL {tool_name}: {json.dumps(obs_data, ensure_ascii=False)}\n"
+                "Hãy tiếp tục suy luận theo quy tắc: nếu cần dữ liệu/hành động tiếp theo thì gọi Tool; "
+                "nếu đã đủ thông tin thì trả lời text cho người dùng."
+            )
+            if step >= MAX_ITERATIONS:
+                final_answer = final_answer or "Đã đạt giới hạn số bước xử lý; vui lòng xác nhận lại yêu cầu."
+                print(f"🏁 [Final Answer]: {final_answer}")
+                trace_logs.append({
+                    "step": step + 1,
+                    "query": user_query,
+                    "action_type": "FINAL_ANSWER",
+                    "thought": "Đạt giới hạn MAX_ITERATIONS sau khi nhận Observation.",
+                    "output": final_answer,
+                    "latency_ms": 0.0
+                })
+                break
+
+            print(f"🧠 [Thought]: Đã nhận Observation; tiếp tục vòng ReAct kế tiếp.")
 
     return trace_logs
 
@@ -179,18 +212,23 @@ if __name__ == "__main__":
     if "--interactive" in sys.argv:
         print("🎮 [INTERACTIVE MODE] Trò chuyện trực tiếp với ReAct Agent:")
         print("💡 Gợi ý câu hỏi thử nghiệm:")
-        print("   - Câu hỏi chung: 'Quy chế học vụ VinUni yêu cầu bao nhiêu tín chỉ?'")
-        print("   - Tra cứu học vụ: 'Hãy tra cứu thông tin học vụ của sinh viên SV2026001'")
-        print("   - Đặt lịch hẹn: 'Đặt lịch hẹn tư vấn cho SV2026001 vào 14:00 ngày 15/09/2026'")
+        print("   - Câu hỏi chung: 'Vinmec hỗ trợ những dịch vụ gì?'")
+        print("   - Tra cứu lịch: 'Hãy tra cứu lịch bác sĩ Nguyễn Văn An tại Vinmec Times City'")
+        print("   - Đặt lịch: 'Hãy đặt lịch khám tại Vinmec Times City vào 14:00 15/09/2026'")
         print("   - Gõ 'exit' hoặc 'quit' để kết thúc phiên trò chuyện.\n")
+        conversation_history = []
         while True:
             try:
                 user_input = input("👤 Sinh viên hỏi: ").strip()
                 if not user_input or user_input.lower() in ["exit", "quit"]:
                     print("👋 Tạm biệt! Kết thúc phiên trò chuyện.")
                     break
-                logs = run_react_agent(user_input, provider, mcp_server)
+                logs = run_react_agent(user_input, provider, mcp_server, conversation_history)
                 save_waterfall_trace(logs)
+                conversation_history.append(f"Người dùng: {user_input}")
+                final_events = [event for event in logs if event.get("action_type") == "FINAL_ANSWER"]
+                if final_events:
+                    conversation_history.append(f"Trợ lý: {final_events[-1].get('output', '')}")
             except (KeyboardInterrupt, EOFError):
                 print("\n👋 Đã thoát phiên tương tác.")
                 break
